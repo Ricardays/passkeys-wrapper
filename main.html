@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Test Core Passkeys Wrapper</title>
+    <script type="module"> // <- Important: use type="module" to use import/export
+        // Import your wrapper library
+        import { init, authenticate, isReady, CorePasskeysError } from './core-passkeys-wrapper.js';
+
+        // Make functions global so you can call them from the browser console.
+        // This is great for testing.
+        window.CorePasskeys = { init, authenticate, isReady, CorePasskeysError };
+
+        // Simple test function to run everything with dummy data
+        window.runTest = async function() {
+            try {
+                console.log("1. Initializing wrapper...");
+                // Replace with your sandbox config
+                await init({ environment: 'sandbox', locale: 'es_CL' });
+                console.log("✅ Init successful. isReady:", isReady());
+
+                console.log("2. Starting authentication...");
+                const coreData = {
+                    serviceId: "SECURE_COF_MERCHANT_OBO#BAASKIT-CERTIFICATION001#01",
+                    srcClientId: "1cb25d44-3975-48b3-955c-b672116d5658",
+                    paymentToken: '8qm1k5CtQZ6A6EWll-DrXw000000000000US', // Has to be sent from the merchant
+                    authType: 'passkey',
+                    reason: 'payment',
+                    acquirerMerchantId: '550e8400',
+                    acquirerBIN: '444444',
+                    dpaName: 'Testing Seglan SRC DPA 001',
+                    dpaUri: 'https://www.testingseglansrcdpa001.com',
+                    amount: {
+                        value: '150.50',
+                        currency: 'USD'
+                    },
+                    locale: 'es_CL',
+                    customer: {
+                        firstName: 'John',
+                        lastName: 'Doe',
+                        billingAddress: {
+                            name: "Coby Greenholt",
+                            line1: "49674 Gorczany Village",
+                            line2: "Hansen Circle",
+                            state: "CT",
+                            zip: "98410",
+                            countryCode: "US"
+                        }
+                    },
+                    merchantCategoryCode: '0020',
+                    merchantCountryCode: 'US'
+                };
+
+                const result = await authenticate(coreData);
+                console.log("✅ Authentication successful! Result:", result);
+
+            } catch (error) {
+                console.error("❌ Test failed with error:", error);
+                console.error("Error name:", error.name);
+                console.error("Error code:", error.code);
+                console.error("Error message:", error.message);
+            }
+        };
+
+        // Optional: Run the test on page load
+        // document.addEventListener('DOMContentLoaded', window.runTest);
+
+    </script>
+</head>
+<body>
+    <h1>Core Passkeys Wrapper Test</h1>
+    <p>Open the browser console (F12).</p>
+    <button onclick="window.runTest()">Run Test</button>
+    <p>You can also call <code>CorePasskeys.init()</code> and <code>CorePasskeys.authenticate()</code> directly from the console.</p>
+</body>
+</html>
