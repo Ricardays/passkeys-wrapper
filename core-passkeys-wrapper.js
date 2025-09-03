@@ -145,12 +145,15 @@ function translateSdkResponse(sdkResponse) {
     // This is a crucial part of the wrapper: hiding Mastercard's complexity.
     // Extract only the fields the Core API cares about.
 
+    // TODO Remove sensitive info
+    console.log("SDK Response Received: ", sdkResponse);
+
     const coreResponse = {
         // TODO check Core needs for response
-        isSuccessful: sdkResponse.status === 'SUCCESS' || sdkResponse.status === 'AUTHENTICATED',
-        status: sdkResponse.status, // e.g., 'SUCCESS', 'FAILED', 'CHALLENGE_REQUIRED'
-        correlationId: sdkResponse.srcCorrelationId,
-        timestamp: new Date().toISOString()
+        assuranceData: sdkResponse.assuranceData,
+        authenticationStatus: sdkResponse.authenticationStatus,
+        authenticationResult: sdkResponse.authenticationResult,
+        srcCorrelationId: sdkResponse.srcCorrelationId
     };
 
     return coreResponse;
