@@ -1,17 +1,17 @@
 // core-passkeys-wrapper.js
-import { 
-    initMastercardSdk, 
-    getMastercardSdk, 
-    mapAuthReason, 
-    mapAuthMethodType
-} from './mastercard-config.js';
 
 let isInitialized = false;
+let _checkoutSdk = null;
+let _environment = 'sandbox'; // Default environment
+
+// ============================================================================
+// Public API Methods
+// ============================================================================
 
 /**
  * Initializes the wrapper library. Must be called once before any other function.
  * @param {Object} config - Configuration object for the wrapper
- * @param {string} config.environment - 'sandbox' or 'production'
+ * @param {string} config.environment - 'sandbox', 'production', or 'local'
  * @param {string} config.locale - e.g., 'en_US', 'es_CL'
  */
 export async function init(config) {
@@ -19,6 +19,9 @@ export async function init(config) {
         console.warn('CorePasskeysWrapper is already initialized.');
         return;
     }
+    // Store the environment for later use
+    _environment = config.environment || 'sandbox';
+    
     // Initialize the Mastercard SDK under the hood
     await initMastercardSdk(config);
     isInitialized = true;
@@ -33,137 +36,329 @@ export function isReady() {
 }
 
 /**
- * Main function to initiate a passkey authentication flow.
- * @param {Object} coreData - The data object provided by the Core API.
- * @returns {Promise<Object>} - A promise resolving to a simplified, Core-friendly response.
+ * Executes the complete authentication flow: initialization, fetching coreData, and authentication.
+ * @param {Object} params - Parameters for the authentication flow.
+ * @param {string} params.managerCode - The manager code (e.g., 'azul').
+ * @param {string} params.merchantCode - The merchant UUID.
+ * @param {string} params.tokenCode - The token UUID.
+ * @param {string} params.authMethod - Authentication method type ('3ds' or 'passkey').
+ * @param {string} params.authReason - Authentication reason ('login', 'payment', 'enroll').
+ * @param {Object} params.amount - Transaction amount details.
+ * @param {string} params.amount.value - The transaction amount.
+ * @param {string} params.amount.currency - The transaction currency code.
+ * @param {string} params.acquirerMerchantId - The acquirer merchant ID.
+ * @param {string} params.acquirerBIN - The acquirer BIN.
+ * @param {string} params.merchantCategoryCode - The merchant category code.
+ * @param {string} params.merchantCountryCode - The merchant country code.
+ * @param {Object} config - Configuration for initialization.
+ * @param {string} config.environment - 'sandbox', 'production', or 'local'
+ * @param {string} config.locale - e.g., 'en_US', 'es_CL'
+ * @returns {Promise<Object>} - The authentication result.
  */
+export async function executeAuthenticate(params, config = {}) {
+    try {
+        console.log("Starting complete authentication flow...");
+        
+        // 1. Initialize the SDK if not already initialized
+        if (!isInitialized) {
+            console.log("Initializing wrapper...");
+            await init(config);
+        }
+
+        // 2. Fetch coreData from the Core API
+        console.log("Fetching coreData from Core API...");
+        const coreData = await getTokenBrandInfo({
+            managerCode: params.managerCode,
+            merchantCode: params.merchantCode,
+            tokenCode: params.tokenCode
+        });
+        
+        // 3. Execute authentication with the fetched coreData and additional params
+        console.log("Starting authentication with coreData and additional parameters...");
+        const authResult = await authenticate({
+            ...coreData, 
+            authMethod: params.authMethod,
+            authReason: params.authReason,
+            amount: params.amount,
+            acquirerMerchantId: params.acquirerMerchantId,
+            acquirerBIN: params.acquirerBIN,
+            merchantCategoryCode: params.merchantCategoryCode,
+            merchantCountryCode: params.merchantCountryCode
+        });
+        
+        console.log("✅ Authentication flow completed successfully!");
+        return authResult;
+        
+    } catch (error) {
+        console.error("❌ Authentication flow failed:", error);
+        throw error;
+    }
+}
+
 export async function authenticate(coreData) {
-    // 1. Check if the wrapper is initialized or get the already initialized SDK instance
     if (!isInitialized) {
         throw new CorePasskeysError('CorePasskeysWrapper not initialized. Please call init() first.');
     }
     const sdk = getMastercardSdk();
 
-    // 2. TRANSLATION: Map Core Data -> Mastercard Payload
+    // Extract values from coreData structure (both from API and passed params)
+    const {
+        unifiedServiceId,
+        unifiedClientId,
+        unifiedTokenId,
+        merchantInfo,
+        billingAddress,
+        authMethod,
+        authReason,
+        amount,
+        acquirerMerchantId,
+        acquirerBIN, 
+        merchantCategoryCode,
+        merchantCountryCode
+    } = coreData;
+
+    // TRANSLATION: Map Core Data -> Mastercard Payload
     const mastercardPayload = {
-        srcCorrelationId:  generateUUID(),
-        serviceId: coreData.serviceId,
-        srcClientId: coreData.srcClientId,
+        srcCorrelationId: generateUUID(),
+        serviceId: unifiedServiceId,
+        srcClientId: unifiedClientId,
         traceId: generateUUID(),
         accountReference: {
-            srcDigitalCardId: coreData.paymentToken // THIS IS THE ONE
+            srcDigitalCardId: unifiedTokenId
         },
         authenticationMethod: {
-            authenticationMethodType: mapAuthMethodType(coreData.authType),
-            authenticationSubject: "CARDHOLDER", // This is likely always the same
+            authenticationMethodType: mapAuthMethodType(authMethod),
+            authenticationSubject: "CARDHOLDER",
         },
         authenticationContext: {
-            authenticationReasons: [mapAuthReason(coreData.reason)],
-            acquirerMerchantId: coreData.acquirerMerchantId,
-            acquirerBIN: coreData.acquirerBIN,
+            authenticationReasons: [mapAuthReason(authReason)],
+            acquirerMerchantId: acquirerMerchantId,
+            acquirerBIN: acquirerBIN,
             dpaData: {
-                dpaName: coreData.dpaName,
-                dpaUri: coreData.dpaName,
+                dpaName: merchantInfo?.name,
+                dpaUri: merchantInfo?.web,
             },
             dpaTransactionOptions: {
                 transactionAmount: {
-                    transactionAmount: coreData.amount.value.toString(),
-                    transactionCurrencyCode: coreData.amount.currency,
+                    transactionAmount: amount.value.toString(),
+                    transactionCurrencyCode: amount.currency,
                 },
-                dpaLocale: coreData.locale || "es_CL",
+                dpaLocale: merchantInfo?.locale,
                 threeDsInputData: {
-                    billingAddress: mapBillingAddress(coreData.customer) // Use a helper function
+                    billingAddress: mapBillingAddress(billingAddress)
                 },
-                merchantCategoryCode: coreData.merchantCategoryCode || "0000", // Sensible default
-                merchantCountryCode: coreData.merchantCountryCode || "US", // Sensible default
+                merchantCategoryCode: merchantCategoryCode,
+                merchantCountryCode: merchantCountryCode,
             }
         }
     };
 
-    // 3. Call the Mastercard SDK with the translated payload
     try {
         console.log("Calling Mastercard SDK with payload:", mastercardPayload);
         const sdkResponse = await sdk.authenticate(mastercardPayload);
-        
-        // 4. Translate the Mastercard-specific response to a Core-friendly format
         return translateSdkResponse(sdkResponse);
-        
     } catch (error) {
         console.error("Mastercard SDK authentication error:", error);
-        // 5. Translate Mastercard errors to a standard Core error
         throw translateSdkError(error);
     }
 }
 
-// --- Internal Helper Functions ---
+// ============================================================================
+// Core API Client Methods
+// ============================================================================
 
 /**
- * Generates a UUID v4. Uses crypto.randomUUID() if available, otherwise a fallback.
- * @returns {string} A UUID v4 string.
+ * Fetches token brand information from the Core API.
+ * This is where the coreData for authentication will come from.
+ * @param {Object} params - Parameters for the API call.
+ * @param {string} params.managerCode - The manager code (e.g., 'azul').
+ * @param {string} params.merchantCode - The merchant UUID.
+ * @param {string} params.tokenCode - The token UUID.
+ * @returns {Promise<Object>} - The coreData object from the Core API response.
  */
+export async function getTokenBrandInfo(params) {
+    const { managerCode, merchantCode, tokenCode } = params;
+
+    // Validate required parameters
+    if (!managerCode || !merchantCode || !tokenCode) {
+        throw new CorePasskeysError('Missing required parameters: managerCode, merchantCode, and tokenCode are all required.', 'INVALID_INPUT');
+    }
+
+    // Determine the base URL based on environment
+    let baseUrl;
+    switch (_environment) {
+        case 'local':
+        case 'development':
+            baseUrl = 'http://localhost:18080';
+            break;
+        case 'production':
+            // TODO set prod base url
+            baseUrl = 'https://tr-tsp-test.gtp-seglan.com';
+            break;
+        case 'sandbox':
+        default:
+            baseUrl = 'https://tr-tsp-test.gtp-seglan.com';
+            break;
+    }
+
+    // Construct the full API URL
+    const apiUrl = `${baseUrl}/tr-tsp-api-core/v1/private/manager/${managerCode}/merchant/${merchantCode}/token/${tokenCode}/brand-info`;
+
+    console.log(`Fetching coreData from: ${apiUrl} (environment: ${_environment})`);
+
+    try {
+        const response = await fetch(apiUrl, {
+            method: 'GET',
+            headers: {
+                'accept': 'application/json',
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Core API request failed with status ${response.status}: ${response.statusText}`);
+        }
+
+        const coreData = await response.json();
+        console.log("Received coreData from Core API:", coreData);
+        return coreData;
+    } catch (error) {
+        console.error("Error fetching token brand info from Core API:", error);
+        throw new CorePasskeysError(`Failed to fetch token information: ${error.message}`, 'CORE_API_ERROR');
+    }
+}
+
+// ============================================================================
+// Mastercard SDK Initialization
+// ============================================================================
+
+/**
+ * Initializes the Mastercard SDK.
+ * @param {Object} config - Configuration object
+ * @param {string} config.environment - 'sandbox' or 'production'
+ * @param {string} config.locale - e.g., 'en_US', 'es_CL'
+ * @returns {Promise<Object>} - A promise that resolves to the configured Mastercard SDK instance
+ */
+async function initMastercardSdk(config) {
+    if (_checkoutSdk) {
+        return _checkoutSdk;
+    }
+
+    // Load the Mastercard SDK script dynamically if it's not already loaded
+    if (!window.AUTHSDK_MASTERCARD) {
+        await _loadSdkScript(config.environment || 'sandbox');
+    }
+
+    // The SDK is already a ready-to-use object.
+    _checkoutSdk = window.AUTHSDK_MASTERCARD;
+    console.log("Mastercard SDK initialized. Available methods:", Object.keys(_checkoutSdk));
+    return _checkoutSdk;
+}
+
+/**
+ * Private helper to load the correct SDK script based on the environment.
+ */
+async function _loadSdkScript(environment) {
+    return new Promise((resolve, reject) => {
+        const scriptUrl = environment === 'production'
+            ? 'https://src.mastercard.com/auth/js/sdk.js'
+            : 'https://sandbox.src.mastercard.com/auth/js/sdk.js';
+
+        const script = document.createElement('script');
+        script.src = scriptUrl;
+        script.defer = true;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error(`Failed to load Mastercard SDK from ${scriptUrl}`));
+        document.head.appendChild(script);
+    });
+}
+
+/**
+ * Public getter to access the pre-initialized SDK.
+ */
+function getMastercardSdk() {
+    if (!_checkoutSdk) {
+        throw new Error('Mastercard SDK not initialized. Call init() first.');
+    }
+    return _checkoutSdk;
+}
+
+// ============================================================================
+// Internal Helper Functions
+// ============================================================================
+
 function generateUUID() {
     try {
         if (window.crypto && window.crypto.randomUUID) {
             return window.crypto.randomUUID();
         }
-        // Fallback for older browsers
         return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
             const r = Math.random() * 16 | 0;
             const v = c === 'x' ? r : (r & 0x3 | 0x8);
             return v.toString(16);
         });
     } catch (e) {
-        // Final fallback if crypto is completely unavailable
         return Date.now().toString(36) + Math.random().toString(36).substring(2);
     }
 }
 
-/**
- * Maps a Core customer object to the Mastercard billingAddress structure.
- * @param {Object} customer - The Core customer data object.
- * @returns {Object} The Mastercard billingAddress object.
- */
-function mapBillingAddress(customer) {
-    // This function provides a safe mapping. If Core's structure is different,
-    // this is where you handle the transformation.
+function mapBillingAddress(billingAddress) {
     return {
-        name: customer?.billingName || `${customer?.firstName || ''} ${customer?.lastName || ''}`.trim(),
-        line1: customer?.billingAddress?.line1 || customer?.address?.line1 || '',
-        line2: customer?.billingAddress?.line2 || customer?.address?.line2 || '',
-        state: customer?.billingAddress?.state || customer?.address?.state || '',
-        zip: customer?.billingAddress?.zip || customer?.address?.zip || customer?.billingAddress?.postalCode || customer?.address?.postalCode || '',
-        countryCode: customer?.billingAddress?.countryCode || customer?.address?.countryCode || 'US' // Sensible default
+        line1: billingAddress?.line1 || '',
+        line2: billingAddress?.line2 || '',
+        city: billingAddress?.city || '',
+        state: billingAddress?.state || '',
+        zip: billingAddress?.zip || '',
+        countryCode: mapCountryCode(billingAddress?.country)
     };
 }
 
 /**
- * Translates the Mastercard SDK response into a simpler, Core-friendly format.
- * @param {Object} sdkResponse - The raw response from the Mastercard SDK.
- * @returns {Object} A simplified response for the Core API.
+ * Maps numeric country codes to alpha-2 country codes.
+ * @param {string} numericCode - The numeric country code (e.g., '840').
+ * @returns {string} The alpha-2 country code (e.g., 'US').
  */
+function mapCountryCode(numericCode) {
+    const countryMap = {
+        '840': 'US', // United States
+        '124': 'CA', // Canada
+        '826': 'GB', // United Kingdom
+        '756': 'CH', // Switzerland
+        '032': 'AR', // Argentina
+        '152': 'CL', // Chile
+        '170': 'CO', // Colombia
+        '218': 'EC', // Ecuador
+        '484': 'MX', // Mexico
+        '604': 'PE', // Peru
+        '858': 'UY', // Uruguay
+        '862': 'VE', // Venezuela
+        '076': 'BR', // Brazil
+        '250': 'FR', // France
+        '276': 'DE', // Germany
+        '380': 'IT', // Italy
+        '724': 'ES', // Spain
+        '156': 'CN', // China
+        '392': 'JP', // Japan
+        '410': 'KR', // South Korea
+        '356': 'IN', // India
+        '554': 'NZ', // New Zealand
+        '036': 'AU', // Australia
+        '214': 'DO', // Dominican Republic
+    };
+    
+    return countryMap[numericCode];
+}
+
 function translateSdkResponse(sdkResponse) {
-    // This is a crucial part of the wrapper: hiding Mastercard's complexity.
-    // Extract only the fields the Core API cares about.
-
-    // TODO Remove sensitive info
     console.log("SDK Response Received: ", sdkResponse);
-
     const coreResponse = {
-        // TODO check Core needs for response
         assuranceData: sdkResponse.assuranceData,
         authenticationStatus: sdkResponse.authenticationStatus,
         authenticationResult: sdkResponse.authenticationResult,
         srcCorrelationId: sdkResponse.srcCorrelationId
     };
-
     return coreResponse;
 }
 
-/**
- * Translates Mastercard SDK errors into standardized Core errors.
- * @param {Error} sdkError - The error thrown by the Mastercard SDK.
- * @returns {CorePasskeysError} A custom error for the Core API.
- */
 function translateSdkError(sdkError) {
     let message = 'Authentication failed';
     let code = 'AUTH_FAILED';
@@ -182,16 +377,28 @@ function translateSdkError(sdkError) {
     return new CorePasskeysError(`${message} (Original: ${sdkError.message})`, code);
 }
 
-// --- Custom Error Class ---
-/**
- * Custom error class for Core Passkeys wrapper errors.
- */
+function mapAuthReason(reason) {
+    const reasonMap = {
+        'login': 'TRANSACTION_AUTHENTICATION',
+        'payment': 'TRANSACTION_AUTHENTICATION',
+        'enroll': 'ENROL_FINANCIAL_INSTRUMENT',
+    };
+    return reasonMap[reason] || 'TRANSACTION_AUTHENTICATION';
+}
+
+function mapAuthMethodType(type) {
+    const typeMap = {
+        '3ds': '3DS',
+        'passkey': 'MANAGED_AUTHENTICATION',
+    };
+    return typeMap[type] || '3DS';
+}
+
+// ============================================================================
+// Custom Error Class
+// ============================================================================
+
 export class CorePasskeysError extends Error {
-    /**
-     * Creates a new CorePasskeysError.
-     * @param {string} message - The error message.
-     * @param {string} code - A short error code for programmatic handling.
-     */
     constructor(message, code = 'UNKNOWN_ERROR') {
         super(message);
         this.name = 'CorePasskeysError';
