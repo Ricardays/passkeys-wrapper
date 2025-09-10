@@ -308,44 +308,8 @@ function mapBillingAddress(billingAddress) {
         city: billingAddress?.city || '',
         state: billingAddress?.state || '',
         zip: billingAddress?.zip || '',
-        countryCode: mapCountryCode(billingAddress?.country)
+        countryCode: billingAddress?.country || ''
     };
-}
-
-/**
- * Maps numeric country codes to alpha-2 country codes.
- * @param {string} numericCode - The numeric country code (e.g., '840').
- * @returns {string} The alpha-2 country code (e.g., 'US').
- */
-function mapCountryCode(numericCode) {
-    const countryMap = {
-        '840': 'US', // United States
-        '124': 'CA', // Canada
-        '826': 'GB', // United Kingdom
-        '756': 'CH', // Switzerland
-        '032': 'AR', // Argentina
-        '152': 'CL', // Chile
-        '170': 'CO', // Colombia
-        '218': 'EC', // Ecuador
-        '484': 'MX', // Mexico
-        '604': 'PE', // Peru
-        '858': 'UY', // Uruguay
-        '862': 'VE', // Venezuela
-        '076': 'BR', // Brazil
-        '250': 'FR', // France
-        '276': 'DE', // Germany
-        '380': 'IT', // Italy
-        '724': 'ES', // Spain
-        '156': 'CN', // China
-        '392': 'JP', // Japan
-        '410': 'KR', // South Korea
-        '356': 'IN', // India
-        '554': 'NZ', // New Zealand
-        '036': 'AU', // Australia
-        '214': 'DO', // Dominican Republic
-    };
-    
-    return countryMap[numericCode];
 }
 
 function translateSdkResponse(sdkResponse) {
