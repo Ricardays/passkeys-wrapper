@@ -1,5 +1,29 @@
 // core-passkeys-wrapper.js
 
+/**
+ * Core Passkeys Wrapper Library
+ * 
+ * A JavaScript wrapper library that abstracts the Mastercard Passkeys SDK integration
+ * for seamless authentication flows within the Core system ecosystem.
+ * 
+ * This library provides:
+ * - Simplified initialization and configuration
+ * - Automatic token information retrieval from Core API
+ * - Translation between Core data formats and Mastercard SDK requirements
+ * - Complete authentication flow management
+ * - Consistent error handling and response formatting
+ * 
+ * Key Features:
+ * - Environment-aware configuration (local, sandbox, production)
+ * - Automatic SDK script loading and initialization
+ * - Core API integration for token data retrieval
+ * - Data mapping and transformation
+ * - Unified error handling with custom error types
+ * 
+ * @module CorePasskeysWrapper
+ * @version 1.0.0
+ */
+
 let isInitialized = false;
 let _checkoutSdk = null;
 let _environment = 'sandbox'; // Default environment
@@ -95,6 +119,11 @@ export async function executeAuthenticate(params, config = {}) {
     }
 }
 
+/**
+ * Main function to initiate a passkey authentication flow.
+ * @param {Object} coreData - The data object provided by the Core API.
+ * @returns {Promise<Object>} - A promise resolving to a simplified, Core-friendly response.
+ */
 export async function authenticate(coreData) {
     if (!isInitialized) {
         throw new CorePasskeysError('CorePasskeysWrapper not initialized. Please call init() first.');
@@ -117,7 +146,7 @@ export async function authenticate(coreData) {
         merchantCountryCode
     } = coreData;
 
-    // TRANSLATION: Map Core Data -> Mastercard Payload
+    // Map Core Data -> Mastercard Payload
     const mastercardPayload = {
         srcCorrelationId: generateUUID(),
         serviceId: unifiedServiceId,
@@ -192,12 +221,11 @@ export async function getTokenBrandInfo(params) {
             baseUrl = 'http://localhost:18080';
             break;
         case 'production':
-            // TODO set prod base url
-            baseUrl = 'https://tr-tsp-test.gtp-seglan.com';
+            baseUrl = 'REDACTED';
             break;
         case 'sandbox':
         default:
-            baseUrl = 'https://tr-tsp-test.gtp-seglan.com';
+            baseUrl = 'REDACTED';
             break;
     }
 
@@ -256,6 +284,8 @@ async function initMastercardSdk(config) {
 
 /**
  * Private helper to load the correct SDK script based on the environment.
+ * @param {string} environment - The environment ('sandbox' or 'production')
+ * @returns {Promise<void>} - A promise that resolves when the script is loaded
  */
 async function _loadSdkScript(environment) {
     return new Promise((resolve, reject) => {
@@ -274,6 +304,8 @@ async function _loadSdkScript(environment) {
 
 /**
  * Public getter to access the pre-initialized SDK.
+ * @returns {Object} The Mastercard SDK instance
+ * @throws {Error} If the SDK is not initialized
  */
 function getMastercardSdk() {
     if (!_checkoutSdk) {
@@ -286,6 +318,10 @@ function getMastercardSdk() {
 // Internal Helper Functions
 // ============================================================================
 
+/**
+ * Generates a UUID v4. Uses crypto.randomUUID() if available, otherwise a fallback.
+ * @returns {string} A UUID v4 string.
+ */
 function generateUUID() {
     try {
         if (window.crypto && window.crypto.randomUUID) {
@@ -301,6 +337,11 @@ function generateUUID() {
     }
 }
 
+/**
+ * Maps a billing address object to the Mastercard billingAddress structure.
+ * @param {Object} billingAddress - The billing address object from coreData.
+ * @returns {Object} The Mastercard billingAddress object.
+ */
 function mapBillingAddress(billingAddress) {
     return {
         line1: billingAddress?.line1 || '',
@@ -312,6 +353,11 @@ function mapBillingAddress(billingAddress) {
     };
 }
 
+/**
+ * Translates the Mastercard SDK response into a simpler, Core-friendly format.
+ * @param {Object} sdkResponse - The raw response from the Mastercard SDK.
+ * @returns {Object} A simplified response for the Core API.
+ */
 function translateSdkResponse(sdkResponse) {
     console.log("SDK Response Received: ", sdkResponse);
     const coreResponse = {
@@ -323,6 +369,11 @@ function translateSdkResponse(sdkResponse) {
     return coreResponse;
 }
 
+/**
+ * Translates Mastercard SDK errors into standardized Core errors.
+ * @param {Error} sdkError - The error thrown by the Mastercard SDK.
+ * @returns {CorePasskeysError} A custom error for the Core API.
+ */
 function translateSdkError(sdkError) {
     let message = 'Authentication failed';
     let code = 'AUTH_FAILED';
@@ -341,6 +392,11 @@ function translateSdkError(sdkError) {
     return new CorePasskeysError(`${message} (Original: ${sdkError.message})`, code);
 }
 
+/**
+ * Maps authentication reason to Mastercard's expected value.
+ * @param {string} reason - The reason code ('login', 'payment', 'enroll').
+ * @returns {string} The Mastercard authentication reason value.
+ */
 function mapAuthReason(reason) {
     const reasonMap = {
         'login': 'TRANSACTION_AUTHENTICATION',
@@ -350,6 +406,11 @@ function mapAuthReason(reason) {
     return reasonMap[reason] || 'TRANSACTION_AUTHENTICATION';
 }
 
+/**
+ * Maps authentication type to Mastercard's method type.
+ * @param {string} type - The type code ('3ds', 'passkey').
+ * @returns {string} The Mastercard authentication method type value.
+ */
 function mapAuthMethodType(type) {
     const typeMap = {
         '3ds': '3DS',
@@ -362,7 +423,15 @@ function mapAuthMethodType(type) {
 // Custom Error Class
 // ============================================================================
 
+/**
+ * Custom error class for Core Passkeys wrapper errors.
+ */
 export class CorePasskeysError extends Error {
+    /**
+     * Creates a new CorePasskeysError.
+     * @param {string} message - The error message.
+     * @param {string} code - A short error code for programmatic handling.
+     */
     constructor(message, code = 'UNKNOWN_ERROR') {
         super(message);
         this.name = 'CorePasskeysError';
